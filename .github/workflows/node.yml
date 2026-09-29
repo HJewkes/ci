@@ -66,16 +66,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .hjewkes-ci
+          path: .git/hjewkes-ci
           sparse-checkout: actions/setup
           persist-credentials: false
       - id: setup
-        uses: ./.hjewkes-ci/actions/setup
+        uses: ./.git/hjewkes-ci/actions/setup
         with:
           node-version: ${{ inputs.node-version }}
           package-manager: ${{ inputs.package-manager }}
@@ -101,23 +101,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .hjewkes-ci
+          path: .git/hjewkes-ci
           sparse-checkout: actions/setup
           persist-credentials: false
       - id: setup
-        uses: ./.hjewkes-ci/actions/setup
+        uses: ./.git/hjewkes-ci/actions/setup
         with:
           node-version: ${{ inputs.node-version }}
           package-manager: ${{ inputs.package-manager }}
           working-directory: ${{ inputs.working-directory }}
-      # Remove the helper checkout so the caller's lint and format never see it.
-      - working-directory: .
-        run: rm -rf .hjewkes-ci
       - if: inputs.setup != ''
         env:
           SETUP: ${{ inputs.setup }}
@@ -141,23 +138,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .hjewkes-ci
+          path: .git/hjewkes-ci
           sparse-checkout: actions/setup
           persist-credentials: false
       - id: setup
-        uses: ./.hjewkes-ci/actions/setup
+        uses: ./.git/hjewkes-ci/actions/setup
         with:
           node-version: ${{ matrix.node }}
           package-manager: ${{ inputs.package-manager }}
           working-directory: ${{ inputs.working-directory }}
-      # Remove the helper checkout so the caller's lint and format never see it.
-      - working-directory: .
-        run: rm -rf .hjewkes-ci
       - if: inputs.setup != ''
         env:
           SETUP: ${{ inputs.setup }}

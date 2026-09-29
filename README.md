@@ -77,9 +77,10 @@ pnpm repos must set `packageManager` in `package.json`, because `pnpm/action-set
 pnpm version from it.
 
 `node.yml` loads `actions/setup` from its own commit (`job.workflow_sha`), not from a tag, so a
-workflow and the setup action it runs always come from the same release. It deletes that
-helper checkout before `setup` and the verify script run, so a repo's lint and format never
-see it.
+workflow and the setup action it runs always come from the same release. It checks that
+helper out under `.git/hjewkes-ci`, where a repo's lint and format tools never look. It cannot
+delete the helper instead, because the runner re-reads the action from disk for post-job
+cleanup.
 
 ### `actions/setup`
 
