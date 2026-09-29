@@ -5,14 +5,101 @@ status check, `check`, and this repo supplies the pieces that make `check` mean 
 
 | Path | What it is |
 |---|---|
+| `.github/workflows/node.yml` | Reusable workflow with the standard Node jobs: `secrets`, `audit`, `verify`, `compat` |
 | `actions/all-green` | The composite action behind every repo's `check` job |
+| `actions/setup` | Composite action that sets up Node and npm or pnpm, restores a cache and installs |
+| `fixtures/` | npm, pnpm and pnpm+turbo repos that this repo's CI runs `node.yml` against |
 
-The reusable `node.yml` workflow, the `setup` action and release workflows arrive in later
-releases.
+Release workflows arrive in a later release.
+
+## A standard Node repo's `ci.yml`
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  std:
+    uses: HJewkes/ci/.github/workflows/node.yml@v1
+    with:
+      compat-versions: '[22, 24]'
+
+  check:
+    if: always()
+    needs: [std]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: HJewkes/ci/actions/all-green@v1
+        with:
+          needs: ${{ toJSON(needs) }}
+```
+
+`permissions: contents: read` is the whole grant. `node.yml` needs nothing more, and a called
+workflow can never hold more than its caller grants. Keep the `pull_request` trigger free of
+`paths` and `branches` filters. A filtered-out workflow never creates `check`, and a required
+check that never appears blocks the merge.
+
+`needs: [std]` covers every job inside `node.yml`. The call concludes `success` when each of
+its jobs succeeded or was skipped by its own inputs, such as `compat` with no versions. Checks
+report as `std / verify`, `std / secrets` and so on. Rulesets require only `check`.
+
+### `node.yml` jobs
+
+| Job | Runs | When |
+|---|---|---|
+| `secrets` | gitleaks over the repo | unless `secrets-scan: false` |
+| `audit` | `<pm> audit --audit-level=<audit-level>` | always |
+| `verify` | install, then `setup`, then `<pm> run <verify-script>` on `node-version` | always |
+| `compat` | the same as `verify`, once per Node version | when `compat-versions` is set |
+
+### `node.yml` inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| `package-manager` | detected | `npm` or `pnpm`. Empty detects it from `pnpm-lock.yaml` or `package-lock.json`. |
+| `node-version` | `'22'` | Node version for `audit` and `verify`. |
+| `compat-versions` | empty | JSON list such as `'[22, 24]'`. Empty or `'[]'` skips `compat`. |
+| `verify-script` | `verify` | Package script that `verify` and `compat` run. |
+| `audit-level` | `critical` | Lowest advisory severity that fails `audit`. |
+| `audit-omit-dev` | `false` | Audit production dependencies only (`--omit=dev` or `--prod`). |
+| `secrets-scan` | `true` | Run gitleaks. |
+| `setup` | empty | Shell commands run after install and before the verify script, such as `npx playwright install --with-deps`. |
+| `working-directory` | `.` | Repo-relative directory of the package to verify. |
+
+pnpm repos must set `packageManager` in `package.json`, because `pnpm/action-setup` reads the
+pnpm version from it.
+
+`node.yml` loads `actions/setup` from its own commit (`job.workflow_sha`), not from a tag, so a
+workflow and the setup action it runs always come from the same release. It deletes that
+helper checkout before `setup` and the verify script run, so a repo's lint and format never
+see it.
+
+### `actions/setup`
+
+Repo-specific jobs (`repo-<name>`) use it after `actions/checkout`:
+
+```yaml
+      - uses: HJewkes/ci/actions/setup@v1
+        with:
+          node-version: '22'
+```
+
+Inputs: `node-version` (default `'22'`), `package-manager` (detected), `working-directory`
+(`.`) and `install` (`true`). Output: `package-manager`. The cache key includes the exact
+Node version as well as the lockfile hash. `setup-node`'s own cache key omits the Node version,
+which once let native modules built for one ABI load under another.
 
 ## Wiring `check`
 
-Every conforming repo has, in `.github/workflows/ci.yml`, a final job with id `check`:
+Every conforming repo has, in `.github/workflows/ci.yml`, a final job with id `check`. With a
+path-filtered job it reads:
 
 ```yaml
 permissions:
@@ -86,7 +173,8 @@ passes by skipping the self-check. The cases:
 
 ## Pinning
 
-Callers pin the moving major tag: `uses: HJewkes/ci/actions/all-green@v1`.
+Callers pin the moving major tag: `HJewkes/ci/.github/workflows/node.yml@v1`,
+`HJewkes/ci/actions/all-green@v1`, `HJewkes/ci/actions/setup@v1`.
 
 - `v1` moves only to a commit on `main` whose own CI is green, and only the owner moves it.
 - `vX.Y.Z` tags are immutable. A tag ruleset forbids updating or deleting them.
@@ -111,3 +199,8 @@ npm run verify
 
 `verify` runs the `node:test` suite. The tests need no dependencies, so there is no lockfile or
 install step, and the same command runs locally and in CI.
+
+CI also calls `node.yml` against each fixture as a `repo-fixture-*` job. The fixtures'
+`verify` scripts run offline `node:test` suites, and the pnpm+turbo fixture resolves a
+workspace dependency through `turbo run test`. To change a fixture's dependencies, run
+`npm install` or `pnpm install` inside it and commit the lockfile.

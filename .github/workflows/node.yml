@@ -1,0 +1,168 @@
+name: node
+
+on:
+  workflow_call:
+    inputs:
+      package-manager:
+        description: npm or pnpm. Empty detects it from the lockfile.
+        type: string
+        default: ''
+      node-version:
+        description: Node version for audit and verify.
+        type: string
+        default: '22'
+      compat-versions:
+        description: JSON list of Node versions for the compat job, for example '[22, 24]'. Empty skips compat.
+        type: string
+        default: ''
+      verify-script:
+        description: Package script that verify and compat run.
+        type: string
+        default: verify
+      audit-level:
+        description: Lowest advisory severity that fails audit.
+        type: string
+        default: critical
+      audit-omit-dev:
+        description: Audit production dependencies only.
+        type: boolean
+        default: false
+      secrets-scan:
+        description: Run gitleaks.
+        type: boolean
+        default: true
+      setup:
+        description: Shell commands run in working-directory after install and before the verify script.
+        type: string
+        default: ''
+      working-directory:
+        description: Repo-relative directory of the package to verify.
+        type: string
+        default: '.'
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    if: inputs.secrets-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .hjewkes-ci
+          sparse-checkout: actions/setup
+          persist-credentials: false
+      - id: setup
+        uses: ./.hjewkes-ci/actions/setup
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+          install: false
+      - env:
+          PM: ${{ steps.setup.outputs.package-manager }}
+          LEVEL: ${{ inputs.audit-level }}
+          OMIT_DEV: ${{ inputs.audit-omit-dev }}
+        run: |
+          args=(audit --audit-level="$LEVEL")
+          if [ "$OMIT_DEV" = true ]; then
+            if [ "$PM" = pnpm ]; then args+=(--prod); else args+=(--omit=dev); fi
+          fi
+          "$PM" "${args[@]}"
+
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .hjewkes-ci
+          sparse-checkout: actions/setup
+          persist-credentials: false
+      - id: setup
+        uses: ./.hjewkes-ci/actions/setup
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+      # Remove the helper checkout so the caller's lint and format never see it.
+      - working-directory: .
+        run: rm -rf .hjewkes-ci
+      - if: inputs.setup != ''
+        env:
+          SETUP: ${{ inputs.setup }}
+        run: bash -euo pipefail -c "$SETUP"
+      - env:
+          PM: ${{ steps.setup.outputs.package-manager }}
+          SCRIPT: ${{ inputs.verify-script }}
+        run: '"$PM" run "$SCRIPT"'
+
+  compat:
+    if: inputs.compat-versions != '' && inputs.compat-versions != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.compat-versions || '[]') }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Check out setup from this workflow's own commit, so node.yml and setup always match.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .hjewkes-ci
+          sparse-checkout: actions/setup
+          persist-credentials: false
+      - id: setup
+        uses: ./.hjewkes-ci/actions/setup
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+      # Remove the helper checkout so the caller's lint and format never see it.
+      - working-directory: .
+        run: rm -rf .hjewkes-ci
+      - if: inputs.setup != ''
+        env:
+          SETUP: ${{ inputs.setup }}
+        run: bash -euo pipefail -c "$SETUP"
+      - env:
+          PM: ${{ steps.setup.outputs.package-manager }}
+          SCRIPT: ${{ inputs.verify-script }}
+        run: '"$PM" run "$SCRIPT"'

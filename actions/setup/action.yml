@@ -1,0 +1,87 @@
+name: setup
+description: >-
+  Set up Node and the package manager, restore a dependency cache keyed on the Node version
+  and the lockfile, and install dependencies. Expects the repo to be checked out already.
+inputs:
+  node-version:
+    description: Node version for actions/setup-node.
+    required: false
+    default: '22'
+  package-manager:
+    description: npm or pnpm. Empty detects it from the lockfile in working-directory.
+    required: false
+    default: ''
+  working-directory:
+    description: Repo-relative directory that holds package.json and the lockfile.
+    required: false
+    default: '.'
+  install:
+    description: Whether to install dependencies from the lockfile.
+    required: false
+    default: 'true'
+outputs:
+  package-manager:
+    description: The package manager in use.
+    value: ${{ steps.detect.outputs.package-manager }}
+runs:
+  using: composite
+  steps:
+    - name: Detect the package manager
+      id: detect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REQUESTED: ${{ inputs.package-manager }}
+      run: |
+        pm="$REQUESTED"
+        if [ -z "$pm" ]; then
+          if [ -f pnpm-lock.yaml ]; then pm=pnpm
+          elif [ -f package-lock.json ]; then pm=npm
+          else echo "::error title=setup::no pnpm-lock.yaml or package-lock.json in $PWD"; exit 1
+          fi
+        fi
+        case "$pm" in
+          npm) lockfile=package-lock.json ;;
+          pnpm) lockfile=pnpm-lock.yaml ;;
+          *) echo "::error title=setup::unsupported package-manager \"$pm\"; use npm or pnpm"; exit 1 ;;
+        esac
+        echo "package-manager=$pm" >> "$GITHUB_OUTPUT"
+        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+    - name: Install pnpm
+      if: steps.detect.outputs.package-manager == 'pnpm'
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      with:
+        package_json_file: ${{ inputs.working-directory }}/package.json
+    # setup-node's own cache key omits the Node version, which let native modules built for one ABI load under another.
+    - name: Install Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+    - name: Locate the package-manager cache
+      id: cache-dir
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ "${{ steps.detect.outputs.package-manager }}" = pnpm ]; then dir=$(pnpm store path --silent)
+        else dir=$(npm config get cache)
+        fi
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
+    - name: Restore the dependency cache
+      if: inputs.install == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.cache-dir.outputs.dir }}
+        key: >-
+          deps-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.cache-dir.outputs.node }}-${{
+          steps.detect.outputs.package-manager }}-${{
+          hashFiles(format('{0}/{1}', inputs.working-directory, steps.detect.outputs.lockfile)) }}
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ "${{ steps.detect.outputs.package-manager }}" = pnpm ]; then pnpm install --frozen-lockfile
+        else npm ci
+        fi

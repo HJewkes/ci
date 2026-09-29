@@ -120,7 +120,16 @@ describe('job id parsing', () => {
 
   test('this repo\'s own check job covers every other job in ci.yml', () => {
     const text = readFileSync(fileURLToPath(new URL('../../.github/workflows/ci.yml', import.meta.url)), 'utf8');
-    const { problems } = runWith({ needs: { verify: ok, compat: ok }, workflowText: text });
+    const { problems } = runWith({
+      needs: {
+        verify: ok,
+        compat: ok,
+        'repo-fixture-npm': ok,
+        'repo-fixture-pnpm': ok,
+        'repo-fixture-pnpm-turbo': ok,
+      },
+      workflowText: text,
+    });
     assert.deepEqual(problems, []);
   });
 });

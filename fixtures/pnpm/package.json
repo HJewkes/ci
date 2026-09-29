@@ -1,0 +1,9 @@
+{
+  "name": "fixture-pnpm",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "verify": "node --test"
+  }
+}

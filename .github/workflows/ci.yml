@@ -35,9 +35,30 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm run verify
 
+  repo-fixture-npm:
+    uses: ./.github/workflows/node.yml
+    with:
+      working-directory: fixtures/npm
+      compat-versions: '[22, 24]'
+      audit-omit-dev: true
+
+  repo-fixture-pnpm:
+    uses: ./.github/workflows/node.yml
+    with:
+      working-directory: fixtures/pnpm
+      secrets-scan: false
+      setup: node --version
+
+  repo-fixture-pnpm-turbo:
+    uses: ./.github/workflows/node.yml
+    with:
+      working-directory: fixtures/pnpm-turbo
+      compat-versions: '[22, 24]'
+      secrets-scan: false
+
   check:
     if: always()
-    needs: [verify, compat]
+    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
