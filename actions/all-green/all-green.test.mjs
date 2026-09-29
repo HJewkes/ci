@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  describeSource,
   evaluateResults,
   parseJobIds,
   parseList,
   parseNeeds,
+  resolveSource,
   run,
   workflowPathFromRef,
 } from './all-green.mjs';
@@ -162,5 +164,72 @@ describe('needs self-check', () => {
   test('reports result failures and uncovered jobs together', () => {
     const { problems } = runWith({ needs: { verify: { result: 'failure' } } });
     assert.equal(problems.length, 2);
+  });
+});
+
+describe('workflow source resolution', () => {
+  const runner = {
+    GITHUB_REPOSITORY: 'HJewkes/demo',
+    GITHUB_WORKFLOW_SHA: 'callersha',
+    GITHUB_WORKFLOW_REF: 'HJewkes/demo/.github/workflows/ci.yml@refs/pull/7/merge',
+  };
+  const reusable = {
+    JOB_WORKFLOW_REPOSITORY: 'HJewkes/ci',
+    JOB_WORKFLOW_SHA: 'reusablesha',
+    JOB_WORKFLOW_FILE_PATH: '.github/workflows/node.yml',
+  };
+
+  test('a job in a reusable workflow reads that workflow from its own repo and commit', () => {
+    assert.deepEqual(resolveSource({ ...runner, ...reusable }), {
+      repository: 'HJewkes/ci',
+      ref: 'reusablesha',
+      file: '.github/workflows/node.yml',
+      origin: 'job.workflow_file_path',
+    });
+  });
+
+  test('falls back to the caller when the runner does not set job.workflow_*', () => {
+    assert.deepEqual(resolveSource({ ...runner, JOB_WORKFLOW_REPOSITORY: '', JOB_WORKFLOW_SHA: '' }), {
+      repository: 'HJewkes/demo',
+      ref: 'callersha',
+      file: '.github/workflows/ci.yml',
+      origin: 'GITHUB_WORKFLOW_REF',
+    });
+  });
+
+  test('falls back as a whole when only some job.workflow_* values are set', () => {
+    const source = resolveSource({ ...runner, ...reusable, JOB_WORKFLOW_FILE_PATH: '' });
+    assert.equal(source.repository, 'HJewkes/demo');
+    assert.equal(source.file, '.github/workflows/ci.yml');
+  });
+
+  test('workflow-file overrides the path but keeps the job workflow repo and commit', () => {
+    const source = resolveSource({ ...runner, ...reusable, WORKFLOW_FILE: '.github/workflows/std.yml' });
+    assert.deepEqual(source, {
+      repository: 'HJewkes/ci',
+      ref: 'reusablesha',
+      file: '.github/workflows/std.yml',
+      origin: 'input workflow-file',
+    });
+  });
+
+  test('fails when neither source yields a commit to check out', () => {
+    assert.throws(() => resolveSource({ ...runner, GITHUB_WORKFLOW_SHA: '' }), /cannot resolve the workflow ref/);
+  });
+
+  test('fails on a value that would break the step output', () => {
+    assert.throws(() => resolveSource({ ...runner, WORKFLOW_FILE: 'a.yml\nref=main' }), /workflow file/);
+  });
+
+  test('the log line names the file, where the path came from, and the commit', () => {
+    assert.equal(
+      describeSource(resolveSource({ ...runner, ...reusable })),
+      'all-green: reading .github/workflows/node.yml (from job.workflow_file_path) at HJewkes/ci@reusablesha',
+    );
+  });
+
+  test('the self-check reads job.workflow_file_path, not the top-level caller', () => {
+    const { reads } = runWith({ needs: { verify: ok, 'repo-dag': ok }, ...reusable });
+    assert.deepEqual(reads, [join('/src', '.github/workflows/node.yml')]);
   });
 });

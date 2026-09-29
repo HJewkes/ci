@@ -1,5 +1,5 @@
 // Runs on the runner's preinstalled Node, so it uses only APIs available in Node 20.
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -88,9 +88,37 @@ export function selfCheck({ needs, selfJob, workflowFile, readWorkflow }) {
   );
 }
 
+function jobWorkflow(env) {
+  const { JOB_WORKFLOW_REPOSITORY: repository, JOB_WORKFLOW_SHA: ref, JOB_WORKFLOW_FILE_PATH: file } = env;
+  return repository && ref && file ? { repository, ref, file } : undefined;
+}
+
+function workflowFileOf(env, fromJob) {
+  if (env.WORKFLOW_FILE) return { file: env.WORKFLOW_FILE, origin: 'input workflow-file' };
+  if (fromJob) return { file: fromJob.file, origin: 'job.workflow_file_path' };
+  return { file: workflowPathFromRef(env.GITHUB_WORKFLOW_REF), origin: 'GITHUB_WORKFLOW_REF' };
+}
+
+export function resolveSource(env) {
+  const fromJob = jobWorkflow(env);
+  const repository = fromJob?.repository ?? env.GITHUB_REPOSITORY;
+  const ref = fromJob?.ref ?? env.GITHUB_WORKFLOW_SHA;
+  const source = { repository, ref, ...workflowFileOf(env, fromJob) };
+  for (const key of ['repository', 'ref', 'file']) {
+    if (!source[key] || /[\r\n]/.test(source[key])) {
+      throw new Error(`cannot resolve the workflow ${key}: got ${JSON.stringify(source[key])}`);
+    }
+  }
+  return source;
+}
+
+export function describeSource({ repository, ref, file, origin }) {
+  return `all-green: reading ${file} (from ${origin}) at ${repository}@${ref}`;
+}
+
 export function run(env, readFile) {
   const needs = parseNeeds(env.NEEDS_JSON);
-  const workflowFile = env.WORKFLOW_FILE || workflowPathFromRef(env.GITHUB_WORKFLOW_REF);
+  const workflowFile = workflowFileOf(env, jobWorkflow(env)).file;
   const readWorkflow = (file) => readFile(join(env.WORKFLOW_ROOT ?? '.', file));
   return [
     ...evaluateResults(needs, parseList(env.ALLOW_SKIPPED)),
@@ -98,16 +126,29 @@ export function run(env, readFile) {
   ];
 }
 
-function main() {
+function writeSource() {
+  const source = resolveSource(process.env);
+  console.log(describeSource(source));
+  const lines = [`repository=${source.repository}`, `ref=${source.ref}`, `workflow-file=${source.file}`];
+  appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
+  return [];
+}
+
+function evaluate() {
+  const problems = run(process.env, (file) => readFileSync(file, 'utf8'));
+  if (problems.length === 0) console.log('all-green: every needed job passed and needs covers every job');
+  return problems;
+}
+
+function main(mode) {
   let problems;
   try {
-    problems = run(process.env, (file) => readFileSync(file, 'utf8'));
+    problems = mode === 'resolve' ? writeSource() : evaluate();
   } catch (error) {
     problems = [error.message];
   }
   for (const problem of problems) console.log(`::error title=all-green::${problem}`);
   if (problems.length > 0) process.exit(1);
-  console.log('all-green: every needed job passed and needs covers every job');
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main(process.argv[2]);

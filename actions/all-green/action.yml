@@ -12,17 +12,27 @@ inputs:
     default: ''
   workflow-file:
     description: >-
-      Repo-relative path of the workflow that defines the calling job. Empty derives it
-      from GITHUB_WORKFLOW_REF, which is right unless the job lives in a reusable workflow.
+      Repo-relative path of the workflow that defines the calling job. Empty takes it from
+      job.workflow_file_path, or from GITHUB_WORKFLOW_REF where the runner lacks job.workflow_*.
     required: false
     default: ''
 runs:
   using: composite
   steps:
+    - name: Resolve the workflow file
+      id: source
+      shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        JOB_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+        JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        JOB_WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+      run: node "$GITHUB_ACTION_PATH/all-green.mjs" resolve
     - name: Check out the workflow files at the running commit
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        ref: ${{ github.workflow_sha }}
+        repository: ${{ steps.source.outputs.repository }}
+        ref: ${{ steps.source.outputs.ref }}
         path: .all-green-src
         sparse-checkout: .github
         fetch-depth: 1
@@ -32,6 +42,6 @@ runs:
       env:
         NEEDS_JSON: ${{ inputs.needs }}
         ALLOW_SKIPPED: ${{ inputs.allow-skipped }}
-        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        WORKFLOW_FILE: ${{ steps.source.outputs.workflow-file }}
         WORKFLOW_ROOT: ${{ github.workspace }}/.all-green-src
       run: node "$GITHUB_ACTION_PATH/all-green.mjs"
