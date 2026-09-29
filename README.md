@@ -396,6 +396,15 @@ So a dependency's install script in the `release` job can mint an OIDC token, an
 version and publish scripts can use the App token. The App's grant is limited to contents and
 pull-requests on the repos it is installed on, and rulesets without a bypass stop it merging.
 
+**Protect the default branch.** A branch protection rule or ruleset on the caller's default
+branch is required. The App holds `contents: write`, so without one it can push straight to
+the default branch, and so can anything that runs with its token (see the list above).
+
+**Tags can fail silently.** `changesets/action` creates each release tag with the API
+(`createRef`) and, if that call fails, logs only a warning. A tag ruleset that restricts tag
+creation therefore lets a release finish green with the package published and no tag. Add the
+release App to the ruleset's bypass list, or check that the tag exists after each release.
+
 Commits on the PR branch go through the GitHub API (`commitMode: github-api`). GitHub signs
 them and attributes them to the App rather than to `github-actions[bot]`. TP-447 found that
 titan-platform's ruleset still needs the owner's review for unattributed commits. Whether App
