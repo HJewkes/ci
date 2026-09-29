@@ -268,8 +268,10 @@ This repo's `secrets-full fixture` workflow calls it on `workflow_dispatch`.
 Two reusable workflows cover the two release shapes in HJewkes repos. Neither pushes to the
 default branch. Each has a `dry-run` input, default `false`. A dry run does every read, prints
 what a real run would write, and stops. Its `release` job shows as skipped. Both split into
-a read-only `plan` job and a `release` job that holds the write grants, so the caller's
-install and verify scripts never run with a write token or `id-token`.
+a read-only `plan` job and a `release` job that holds the write grants. Only `plan` is
+isolated: its install, `setup` and verify scripts run with a read-only `GITHUB_TOKEN` and no
+`id-token`. The `release` job's own install and scripts do not get that isolation, as
+described for each workflow below.
 
 A caller must grant every permission the `release` job requests, even for a dry run. GitHub
 checks the grants when the run starts, before `dry-run` can skip the job.
@@ -319,6 +321,10 @@ Setup and limits:
 - A tag ruleset that restricts tag creation blocks the push unless it lets GitHub Actions
   create tags. Rulesets that only forbid updating or deleting tags are fine.
 - Gate it on CI by adding `needs:` on a `node.yml` job in the same caller.
+- If the tag push succeeds and `gh release create` then fails, the tag exists without a
+  release, and a rerun fails on the existing tag. Recover by hand once the cause is fixed:
+  `gh release create v1.2.3 --verify-tag --title v1.2.3 --generate-notes`, adding
+  `--prerelease` for a `-` version. Do not delete the tag.
 
 ### `release-changesets.yml`
 
@@ -341,8 +347,7 @@ permissions:
 jobs:
   release:
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
       id-token: write
     uses: HJewkes/ci/.github/workflows/release-changesets.yml@v1
     with:
@@ -370,8 +375,26 @@ jobs:
 Secret: `app-private-key`, the release App's private key, required unless `dry-run`.
 
 In the `plan` job a dry run with pending changesets runs `version-script` on its own
-checkout and prints the changed files and versions. That checkout holds no credentials, so
-nothing leaves the runner. A real run fails at once if the App client ID or key is missing.
+checkout and prints the changed files and versions. The checkout stores no credentials and
+the job's `GITHUB_TOKEN` is read-only, so nothing can be pushed. A real run fails at once if
+the App client ID or key is missing.
+
+The caller grants only `contents: read` and `id-token: write`. Every GitHub write in the
+`release` job uses the App token: the Version Packages branch, its commits, the release tags
+and the GitHub releases. `GITHUB_TOKEN` stays read-only. The job's checkout uses
+`persist-credentials: false`. In `github-api` mode `changesets/action` pushes through the API,
+not git.
+
+What runs with what in the `release` job:
+
+- The install runs lifecycle scripts, with `id-token` available. No App token exists yet.
+- `changesets/action` writes the App token to `~/.netrc` and passes it as `GITHUB_TOKEN` to
+  `version-script` and `publish-script`. Those scripts, and any lifecycle scripts they
+  trigger, run with the App token and `id-token`.
+
+So a dependency's install script in the `release` job can mint an OIDC token, and the
+version and publish scripts can use the App token. The App's grant is limited to contents and
+pull-requests on the repos it is installed on, and rulesets without a bypass stop it merging.
 
 Commits on the PR branch go through the GitHub API (`commitMode: github-api`). GitHub signs
 them and attributes them to the App rather than to `github-actions[bot]`. TP-447 found that

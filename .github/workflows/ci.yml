@@ -70,8 +70,7 @@ jobs:
 
   repo-fixture-release-changesets:
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
       id-token: write
     uses: ./.github/workflows/release-changesets.yml
     with:

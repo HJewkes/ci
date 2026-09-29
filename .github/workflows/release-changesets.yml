@@ -106,7 +106,7 @@ jobs:
             echo "version=${VERSION_SCRIPT:-$PM exec changeset version}"
             echo "publish=${PUBLISH_SCRIPT:-$PM exec changeset publish}"
           } >> "$GITHUB_OUTPUT"
-      # This checkout holds no credentials, so the versioned tree cannot leave the runner.
+      # The checkout stores no credentials and GITHUB_TOKEN is read-only, so the versioned tree cannot be pushed.
       - name: Preview the Version Packages diff
         if: steps.scripts.outputs.mode == 'version-pr'
         env:
@@ -146,9 +146,9 @@ jobs:
     needs: plan
     if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
+    # Every GitHub write uses the App token, so GITHUB_TOKEN stays read-only.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
       id-token: write
     concurrency:
       group: release-changesets-${{ github.repository }}-${{ github.ref }}
@@ -167,18 +167,11 @@ jobs:
             echo "::error title=release-changesets::set app-client-id and the app-private-key secret; GITHUB_TOKEN pushes never trigger the PR's CI"
             exit 1
           fi
-      # Only the PR branch uses the App token; npm publishing stays on OIDC.
-      - id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ inputs.app-client-id }}
-          private-key: ${{ secrets.app-private-key }}
-          permission-contents: write
-          permission-pull-requests: write
+      # In github-api mode changesets/action pushes through the API and writes its own ~/.netrc.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
       # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -197,9 +190,20 @@ jobs:
           node-version: ${{ inputs.node-version }}
           registry-url: https://registry.npmjs.org
       # Trusted publishing needs npm 11.5.1 or later; npm 12 rejects the --git-checks flag changesets passes.
-      - run: npm install -g npm@11 && npm --version
-      # github-api commits are signed and attributed to the App, which rulesets count as attributed.
+      - run: npm install -g npm@11.20.0 && npm --version
+      # Only the PR branch, its commits and the GitHub releases use the App token; npm publishing stays on OIDC.
+      - id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+      # github-api commits are signed and attributed to the App, not github-actions[bot].
       - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        env:
+          # The action reads env GITHUB_TOKEN before its github-token input; both name the App token.
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
         with:
           github-token: ${{ steps.app.outputs.token }}
           commitMode: github-api
