@@ -172,6 +172,45 @@ passes by skipping the self-check. The cases:
 - The file uses flow-style `jobs: { ... }` or a layout the scanner cannot read. Rewrite it in
   block style.
 
+## For callers
+
+Facts found while migrating agent-chat, active-work and herald.
+
+**`std / compat` shows as skipped.** A non-library caller that passes no `compat-versions` sees
+this on every PR. It is expected and `check` treats it as passing.
+
+**Put extra offline steps in `verify`.** A pure, offline step, such as an env-var test rerun or
+a CLI smoke, belongs in the caller's `verify` script. A separate job costs another install and
+is billed as at least one minute.
+
+**Billed minutes.** GitHub rounds each job up to a whole minute. Splitting CI into `verify`,
+`secrets`, `audit` and `check` took agent-chat from 2 to 5 billed minutes and active-work from
+2 to 6, for about the same wall time. This is free on public repos and about 2.5 to 3x on private
+ones. A private caller can pass `secrets-scan: false` and fold the audit into `verify`.
+
+**gitleaks scans a commit range, not history.** On `push` and `pull_request`, gitleaks-action
+scans only the event's commit range, even with `fetch-depth: 0`. The pre-migration CI never
+scanned full history on PRs either: active-work run 36457573421 logged "1 commits scanned".
+Full-history scanning needs a scheduled run, tracked in the CI-standard plan (titan-platform TP-452).
+
+**Private callers and permissions.** `node.yml` pins `permissions: contents: read`, and a
+caller cannot raise it. Whether gitleaks on `pull_request` needs `pull-requests: read` in a
+private repo is unverified.
+
+**Migrating a repo whose ruleset requires legacy job names.** A `std` call reports as
+`std / <job>`, so it cannot keep legacy names. Migrate in stages:
+
+1. Stage (a) keeps the old jobs, adds a `check` job (`all-green`, `needs` every job) and has
+   one old job run `verify`. Then switch the ruleset to require `check`.
+2. A later PR removes the old jobs.
+
+**Run the audit and tests on main first.** Before stage (a), run the repo's audit and tests on
+`main`. herald's lockfile would fail `npm audit` today (2 critical); its last main run passed.
+
+**Name temp directories distinctly.** A caller's `mktemp` naming can collide with its own test
+guards. active-work's `aw-test-*` matched the shape its `assertSafeToRemove` guard checks
+and failed two tests.
+
 ## Pinning
 
 Callers pin the moving major tag: `HJewkes/ci/.github/workflows/node.yml@v1`,
