@@ -1,10 +1,11 @@
 // Runs on the runner's preinstalled Node, so it uses only APIs available in Node 20.
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const JOB_KEY = /^(["']?)([A-Za-z_][A-Za-z0-9_-]*)\1\s*:(\s|$)/;
 const JOBS_KEY = /^jobs\s*:\s*(#.*)?$/;
+const WORKFLOWS_DIR = '.github/workflows/';
 
 export function parseList(text) {
   return (text ?? '').split(/[\s,]+/).filter(Boolean);
@@ -88,9 +89,55 @@ export function selfCheck({ needs, selfJob, workflowFile, readWorkflow }) {
   );
 }
 
+const JOB_WORKFLOW_FIELDS = [
+  { key: 'repository', variable: 'JOB_WORKFLOW_REPOSITORY', context: 'job.workflow_repository' },
+  { key: 'ref', variable: 'JOB_WORKFLOW_SHA', context: 'job.workflow_sha' },
+  { key: 'file', variable: 'JOB_WORKFLOW_FILE_PATH', context: 'job.workflow_file_path' },
+];
+
+function jobWorkflow(env) {
+  const missing = JOB_WORKFLOW_FIELDS.filter(({ variable }) => !env[variable]);
+  if (missing.length === JOB_WORKFLOW_FIELDS.length) return undefined;
+  if (missing.length > 0) {
+    const names = missing.map(({ context }) => context).join(', ');
+    throw new Error(`the runner set only some job.workflow_* values; missing ${names}`);
+  }
+  return Object.fromEntries(JOB_WORKFLOW_FIELDS.map(({ key, variable }) => [key, env[variable]]));
+}
+
+function checkWorkflowPath(file, origin) {
+  if (!file.startsWith(WORKFLOWS_DIR) || file.split('/').includes('..')) {
+    throw new Error(`${origin} "${file}" must be a relative path under ${WORKFLOWS_DIR} with no ".." segment`);
+  }
+  return { file, origin };
+}
+
+function workflowFileOf(env, fromJob) {
+  if (env.WORKFLOW_FILE) return checkWorkflowPath(env.WORKFLOW_FILE, 'input workflow-file');
+  if (fromJob) return checkWorkflowPath(fromJob.file, 'job.workflow_file_path');
+  return checkWorkflowPath(workflowPathFromRef(env.GITHUB_WORKFLOW_REF), 'GITHUB_WORKFLOW_REF');
+}
+
+export function resolveSource(env) {
+  const fromJob = jobWorkflow(env);
+  const repository = fromJob?.repository ?? env.GITHUB_REPOSITORY;
+  const ref = fromJob?.ref ?? env.GITHUB_WORKFLOW_SHA;
+  const source = { repository, ref, ...workflowFileOf(env, fromJob) };
+  for (const key of ['repository', 'ref', 'file']) {
+    if (!source[key] || /[\r\n]/.test(source[key])) {
+      throw new Error(`cannot resolve the workflow ${key}: got ${JSON.stringify(source[key])}`);
+    }
+  }
+  return source;
+}
+
+export function describeSource({ repository, ref, file, origin }) {
+  return `all-green: reading ${file} (from ${origin}) at ${repository}@${ref}`;
+}
+
 export function run(env, readFile) {
   const needs = parseNeeds(env.NEEDS_JSON);
-  const workflowFile = env.WORKFLOW_FILE || workflowPathFromRef(env.GITHUB_WORKFLOW_REF);
+  const workflowFile = workflowFileOf(env, jobWorkflow(env)).file;
   const readWorkflow = (file) => readFile(join(env.WORKFLOW_ROOT ?? '.', file));
   return [
     ...evaluateResults(needs, parseList(env.ALLOW_SKIPPED)),
@@ -98,16 +145,29 @@ export function run(env, readFile) {
   ];
 }
 
-function main() {
+function writeSource() {
+  const source = resolveSource(process.env);
+  console.log(describeSource(source));
+  const lines = [`repository=${source.repository}`, `ref=${source.ref}`, `workflow-file=${source.file}`];
+  appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
+  return [];
+}
+
+function evaluate() {
+  const problems = run(process.env, (file) => readFileSync(file, 'utf8'));
+  if (problems.length === 0) console.log('all-green: every needed job passed and needs covers every job');
+  return problems;
+}
+
+function main(mode) {
   let problems;
   try {
-    problems = run(process.env, (file) => readFileSync(file, 'utf8'));
+    problems = mode === 'resolve' ? writeSource() : evaluate();
   } catch (error) {
     problems = [error.message];
   }
   for (const problem of problems) console.log(`::error title=all-green::${problem}`);
   if (problems.length > 0) process.exit(1);
-  console.log('all-green: every needed job passed and needs covers every job');
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main(process.argv[2]);

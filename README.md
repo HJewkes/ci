@@ -134,7 +134,7 @@ treats a skipped required check as passing.
 |---|---|---|
 | `needs` | required | Always `${{ toJSON(needs) }}`. A composite action cannot read `needs` itself. |
 | `allow-skipped` | empty | Job ids, separated by commas or whitespace, whose `skipped` result counts as passing. |
-| `workflow-file` | derived | Repo-relative path of the workflow that defines the calling job. |
+| `workflow-file` | derived | Path under `.github/workflows/` of the workflow that defines the calling job. Overrides the derived path. |
 
 ### What fails `check`
 
@@ -156,20 +156,35 @@ gate an explicit, reviewable line in `ci.yml`. `allow-skipped` never excuses `fa
 
 ### How the self-check finds the workflow file
 
-The action checks out `.github` at `github.workflow_sha` (a sparse, depth-1 checkout into
+The action reads the workflow file that defines the calling job, at the commit it ran from.
+It takes the repo, commit and path from `job.workflow_repository`, `job.workflow_sha` and
+`job.workflow_file_path`. For a `check` job inside a reusable workflow, these name the reusable
+workflow's own file, so it needs no `workflow-file` input. Where the runner sets none of the
+three, as on GitHub Enterprise Server, it falls back to the running repo at
+`github.workflow_sha` and the path in `GITHUB_WORKFLOW_REF`, which names the top-level caller.
+A `workflow-file` input replaces the path from either source. The step log names the source,
+for example `all-green: reading .github/workflows/ci.yml (from job.workflow_file_path) at
+HJewkes/ci@<sha>`.
+
+It checks out `.github` from that repo and commit (a sparse, depth-1 checkout into
 `.all-green-src`), so it reads the workflow as it ran, not as it is on the default branch. It
-takes the file path from `GITHUB_WORKFLOW_REF` (`owner/repo/.github/workflows/ci.yml@ref`) and
-the calling job's id from `GITHUB_JOB`. It then reads the top-level keys under `jobs:` with a
-small line scanner. The scanner needs no YAML dependency and handles every block-style
+takes the calling job's id from `GITHUB_JOB`. It then reads the top-level keys under `jobs:`
+with a small line scanner. The scanner needs no YAML dependency and handles every block-style
 workflow in HJewkes repos.
 
 When it cannot find or read the file, `check` fails with an error that says why. It never
 passes by skipping the self-check. The cases:
 
 - The checkout fails, for example because the job's token lacks `contents: read`. Grant it.
-- The calling job is not in the derived file. This happens when `check` lives inside a
-  reusable workflow, because `GITHUB_WORKFLOW_REF` names the top-level caller. Set
-  `workflow-file` to the file that defines `check`.
+- The repo, commit or path cannot be resolved, for example because `GITHUB_WORKFLOW_REF` is
+  missing on a runner without `job.workflow_*`.
+- The runner sets only some of the three `job.workflow_*` values. The error names the missing
+  ones. The action does not fall back, because a partial set would self-check the wrong file.
+- The path, from any source, is not under `.github/workflows/` or has a `..` segment. This
+  keeps the self-check from reading any file other than a workflow.
+- The calling job is not in the file it read. On a runner without `job.workflow_*`, this
+  happens when `check` lives inside a reusable workflow. Set `workflow-file` to the file that
+  defines `check`.
 - The file uses flow-style `jobs: { ... }` or a layout the scanner cannot read. Rewrite it in
   block style.
 
