@@ -133,7 +133,7 @@ treats a skipped required check as passing.
 |---|---|---|
 | `needs` | required | Always `${{ toJSON(needs) }}`. A composite action cannot read `needs` itself. |
 | `allow-skipped` | empty | Job ids, separated by commas or whitespace, whose `skipped` result counts as passing. |
-| `workflow-file` | derived | Repo-relative path of the workflow that defines the calling job. Overrides the derived path. |
+| `workflow-file` | derived | Path under `.github/workflows/` of the workflow that defines the calling job. Overrides the derived path. |
 
 ### What fails `check`
 
@@ -158,7 +158,7 @@ gate an explicit, reviewable line in `ci.yml`. `allow-skipped` never excuses `fa
 The action reads the workflow file that defines the calling job, at the commit it ran from.
 It takes the repo, commit and path from `job.workflow_repository`, `job.workflow_sha` and
 `job.workflow_file_path`. For a `check` job inside a reusable workflow, these name the reusable
-workflow's own file, so it needs no `workflow-file` input. Where the runner does not set all
+workflow's own file, so it needs no `workflow-file` input. Where the runner sets none of the
 three, as on GitHub Enterprise Server, it falls back to the running repo at
 `github.workflow_sha` and the path in `GITHUB_WORKFLOW_REF`, which names the top-level caller.
 A `workflow-file` input replaces the path from either source. The step log names the source,
@@ -177,6 +177,10 @@ passes by skipping the self-check. The cases:
 - The checkout fails, for example because the job's token lacks `contents: read`. Grant it.
 - The repo, commit or path cannot be resolved, for example because `GITHUB_WORKFLOW_REF` is
   missing on a runner without `job.workflow_*`.
+- The runner sets only some of the three `job.workflow_*` values. The error names the missing
+  ones. The action does not fall back, because a partial set would self-check the wrong file.
+- The path, from any source, is not under `.github/workflows/` or has a `..` segment. This
+  keeps the self-check from reading any file other than a workflow.
 - The calling job is not in the file it read. On a runner without `job.workflow_*`, this
   happens when `check` lives inside a reusable workflow. Set `workflow-file` to the file that
   defines `check`.

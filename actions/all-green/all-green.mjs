@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const JOB_KEY = /^(["']?)([A-Za-z_][A-Za-z0-9_-]*)\1\s*:(\s|$)/;
 const JOBS_KEY = /^jobs\s*:\s*(#.*)?$/;
+const WORKFLOWS_DIR = '.github/workflows/';
 
 export function parseList(text) {
   return (text ?? '').split(/[\s,]+/).filter(Boolean);
@@ -88,15 +89,33 @@ export function selfCheck({ needs, selfJob, workflowFile, readWorkflow }) {
   );
 }
 
+const JOB_WORKFLOW_FIELDS = [
+  { key: 'repository', variable: 'JOB_WORKFLOW_REPOSITORY', context: 'job.workflow_repository' },
+  { key: 'ref', variable: 'JOB_WORKFLOW_SHA', context: 'job.workflow_sha' },
+  { key: 'file', variable: 'JOB_WORKFLOW_FILE_PATH', context: 'job.workflow_file_path' },
+];
+
 function jobWorkflow(env) {
-  const { JOB_WORKFLOW_REPOSITORY: repository, JOB_WORKFLOW_SHA: ref, JOB_WORKFLOW_FILE_PATH: file } = env;
-  return repository && ref && file ? { repository, ref, file } : undefined;
+  const missing = JOB_WORKFLOW_FIELDS.filter(({ variable }) => !env[variable]);
+  if (missing.length === JOB_WORKFLOW_FIELDS.length) return undefined;
+  if (missing.length > 0) {
+    const names = missing.map(({ context }) => context).join(', ');
+    throw new Error(`the runner set only some job.workflow_* values; missing ${names}`);
+  }
+  return Object.fromEntries(JOB_WORKFLOW_FIELDS.map(({ key, variable }) => [key, env[variable]]));
+}
+
+function checkWorkflowPath(file, origin) {
+  if (!file.startsWith(WORKFLOWS_DIR) || file.split('/').includes('..')) {
+    throw new Error(`${origin} "${file}" must be a relative path under ${WORKFLOWS_DIR} with no ".." segment`);
+  }
+  return { file, origin };
 }
 
 function workflowFileOf(env, fromJob) {
-  if (env.WORKFLOW_FILE) return { file: env.WORKFLOW_FILE, origin: 'input workflow-file' };
-  if (fromJob) return { file: fromJob.file, origin: 'job.workflow_file_path' };
-  return { file: workflowPathFromRef(env.GITHUB_WORKFLOW_REF), origin: 'GITHUB_WORKFLOW_REF' };
+  if (env.WORKFLOW_FILE) return checkWorkflowPath(env.WORKFLOW_FILE, 'input workflow-file');
+  if (fromJob) return checkWorkflowPath(fromJob.file, 'job.workflow_file_path');
+  return checkWorkflowPath(workflowPathFromRef(env.GITHUB_WORKFLOW_REF), 'GITHUB_WORKFLOW_REF');
 }
 
 export function resolveSource(env) {

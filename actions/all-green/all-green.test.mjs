@@ -197,10 +197,29 @@ describe('workflow source resolution', () => {
     });
   });
 
-  test('falls back as a whole when only some job.workflow_* values are set', () => {
-    const source = resolveSource({ ...runner, ...reusable, JOB_WORKFLOW_FILE_PATH: '' });
-    assert.equal(source.repository, 'HJewkes/demo');
-    assert.equal(source.file, '.github/workflows/ci.yml');
+  const partialSets = [
+    ['JOB_WORKFLOW_FILE_PATH'],
+    ['JOB_WORKFLOW_SHA'],
+    ['JOB_WORKFLOW_REPOSITORY'],
+    ['JOB_WORKFLOW_SHA', 'JOB_WORKFLOW_FILE_PATH'],
+    ['JOB_WORKFLOW_REPOSITORY', 'JOB_WORKFLOW_FILE_PATH'],
+    ['JOB_WORKFLOW_REPOSITORY', 'JOB_WORKFLOW_SHA'],
+  ];
+  for (const unset of partialSets) {
+    test(`fails closed rather than fall back when only ${unset.join(' and ')} is unset`, () => {
+      const env = { ...runner, ...reusable, ...Object.fromEntries(unset.map((name) => [name, ''])) };
+      assert.throws(() => resolveSource(env), /set only some job\.workflow_\* values; missing job\.workflow_/);
+    });
+  }
+
+  test('the partial-set error names each missing job.workflow_* value', () => {
+    const env = { ...runner, ...reusable, JOB_WORKFLOW_SHA: '', JOB_WORKFLOW_FILE_PATH: '' };
+    assert.throws(() => resolveSource(env), /missing job\.workflow_sha, job\.workflow_file_path$/);
+  });
+
+  test('the self-check fails closed too when job.workflow_file_path alone is missing', () => {
+    const env = { ...reusable, JOB_WORKFLOW_FILE_PATH: '' };
+    assert.throws(() => runWith({ needs: { verify: ok, 'repo-dag': ok }, ...env }), /missing job\.workflow_file_path/);
   });
 
   test('workflow-file overrides the path but keeps the job workflow repo and commit', () => {
@@ -218,7 +237,8 @@ describe('workflow source resolution', () => {
   });
 
   test('fails on a value that would break the step output', () => {
-    assert.throws(() => resolveSource({ ...runner, WORKFLOW_FILE: 'a.yml\nref=main' }), /workflow file/);
+    const file = '.github/workflows/a.yml\nref=main';
+    assert.throws(() => resolveSource({ ...runner, WORKFLOW_FILE: file }), /cannot resolve the workflow file/);
   });
 
   test('the log line names the file, where the path came from, and the commit', () => {
@@ -231,5 +251,32 @@ describe('workflow source resolution', () => {
   test('the self-check reads job.workflow_file_path, not the top-level caller', () => {
     const { reads } = runWith({ needs: { verify: ok, 'repo-dag': ok }, ...reusable });
     assert.deepEqual(reads, [join('/src', '.github/workflows/node.yml')]);
+  });
+});
+
+describe('workflow path constraint', () => {
+  const outsideWorkflows = /input workflow-file .* must be a relative path under \.github\/workflows\//;
+
+  const escapes = [
+    '../../etc/hosts',
+    '/etc/hosts',
+    '.github/workflows/../../package.json',
+    '.github/workflows/..',
+    '.github/workflows/sub/../ci.yml',
+    '/.github/workflows/ci.yml',
+    './.github/workflows/ci.yml',
+    'README.md',
+    '.github/actions/x.yml',
+    '.github/workflows',
+  ];
+  for (const file of escapes) {
+    test(`workflow-file "${file}" fails closed before any read`, () => {
+      assert.throws(() => runWith({ needs: { verify: ok }, WORKFLOW_FILE: file }), outsideWorkflows);
+    });
+  }
+
+  test('a job.workflow_file_path outside .github/workflows/ fails closed', () => {
+    const env = { JOB_WORKFLOW_REPOSITORY: 'o/r', JOB_WORKFLOW_SHA: 's', JOB_WORKFLOW_FILE_PATH: '../x.yml' };
+    assert.throws(() => runWith({ needs: { verify: ok }, ...env }), /job\.workflow_file_path "\.\.\/x\.yml" must be/);
   });
 });

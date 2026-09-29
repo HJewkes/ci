@@ -12,8 +12,8 @@ inputs:
     default: ''
   workflow-file:
     description: >-
-      Repo-relative path of the workflow that defines the calling job. Empty takes it from
-      job.workflow_file_path, or from GITHUB_WORKFLOW_REF where the runner lacks job.workflow_*.
+      Path under .github/workflows/ of the workflow that defines the calling job. Empty takes it
+      from job.workflow_file_path, or from GITHUB_WORKFLOW_REF where the runner sets no job.workflow_*.
     required: false
     default: ''
 runs:
