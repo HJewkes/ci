@@ -185,13 +185,13 @@ is billed as at least one minute.
 
 **Billed minutes.** GitHub rounds each job up to a whole minute. Splitting CI into `verify`,
 `secrets`, `audit` and `check` took agent-chat from 2 to 5 billed minutes and active-work from
-2 to 6, for about the same wall time. This is free on public repos and about 2.5x on private
+2 to 6, for about the same wall time. This is free on public repos and about 2.5 to 3x on private
 ones. A private caller can pass `secrets-scan: false` and fold the audit into `verify`.
 
 **gitleaks scans a commit range, not history.** On `push` and `pull_request`, gitleaks-action
 scans only the event's commit range, even with `fetch-depth: 0`. The pre-migration CI never
 scanned full history on PRs either: active-work run 36457573421 logged "1 commits scanned".
-Full-history scanning needs a scheduled run, which this repo tracks separately.
+Full-history scanning needs a scheduled run, tracked in the CI-standard plan (titan-platform TP-452).
 
 **Private callers and permissions.** `node.yml` pins `permissions: contents: read`, and a
 caller cannot raise it. Whether gitleaks on `pull_request` needs `pull-requests: read` in a
@@ -205,11 +205,10 @@ private repo is unverified.
 2. A later PR removes the old jobs.
 
 **Run the audit and tests on main first.** Before stage (a), run the repo's audit and tests on
-`main`. herald's `security-audit` was already red on main (critical vitest advisories), and its
-migration PR had to fix that.
+`main`. herald's lockfile would fail `npm audit` today (2 critical); its last main run passed.
 
 **Name temp directories distinctly.** A caller's `mktemp` naming can collide with its own test
-guards. active-work's `aw-test-home.*` matched the shape its `assertSafeToRemove` guard checks
+guards. active-work's `aw-test-*` matched the shape its `assertSafeToRemove` guard checks
 and failed two tests.
 
 ## Pinning
