@@ -1,0 +1,37 @@
+name: all-green
+description: >-
+  Aggregator for a workflow's required `check` job. Fails unless every needed job
+  succeeded, and unless `needs` names every other job in the calling workflow file.
+inputs:
+  needs:
+    description: The expression toJSON(needs) from the calling job.
+    required: true
+  allow-skipped:
+    description: Comma- or whitespace-separated job ids whose `skipped` result counts as passing.
+    required: false
+    default: ''
+  workflow-file:
+    description: >-
+      Repo-relative path of the workflow that defines the calling job. Empty derives it
+      from GITHUB_WORKFLOW_REF, which is right unless the job lives in a reusable workflow.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Check out the workflow files at the running commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.workflow_sha }}
+        path: .all-green-src
+        sparse-checkout: .github
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Evaluate needs
+      shell: bash
+      env:
+        NEEDS_JSON: ${{ inputs.needs }}
+        ALLOW_SKIPPED: ${{ inputs.allow-skipped }}
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        WORKFLOW_ROOT: ${{ github.workspace }}/.all-green-src
+      run: node "$GITHUB_ACTION_PATH/all-green.mjs"
