@@ -7,11 +7,11 @@ status check, `check`, and this repo supplies the pieces that make `check` mean 
 |---|---|
 | `.github/workflows/node.yml` | Reusable workflow with the standard Node jobs: `secrets`, `audit`, `verify`, `compat` |
 | `.github/workflows/secrets-full.yml` | Reusable workflow that runs gitleaks over a repo's full git history, for a scheduled caller |
+| `.github/workflows/release-tag.yml` | Reusable workflow that creates an annotated version tag and a GitHub release |
+| `.github/workflows/release-changesets.yml` | Reusable workflow for the changesets flow: a Version Packages PR, then an npm publish |
 | `actions/all-green` | The composite action behind every repo's `check` job |
 | `actions/setup` | Composite action that sets up Node and npm or pnpm, restores a cache and installs |
-| `fixtures/` | npm, pnpm and pnpm+turbo repos that this repo's CI runs `node.yml` against |
-
-Release workflows arrive in a later release.
+| `fixtures/` | npm, pnpm, pnpm+turbo and changesets repos that this repo's CI runs the workflows against |
 
 ## A standard Node repo's `ci.yml`
 
@@ -263,6 +263,137 @@ no activity for 60 days, so a quiet repo's scan can stop without a failure.
 
 This repo's `secrets-full fixture` workflow calls it on `workflow_dispatch`.
 
+## Releases
+
+Two reusable workflows cover the two release shapes in HJewkes repos. Neither pushes to the
+default branch. Each has a `dry-run` input, default `false`. A dry run does every read, prints
+what a real run would write, and stops. Its `release` job shows as skipped. Both split into
+a read-only `plan` job and a `release` job that holds the write grants, so the caller's
+install and verify scripts never run with a write token or `id-token`.
+
+A caller must grant every permission the `release` job requests, even for a dry run. GitHub
+checks the grants when the run starts, before `dry-run` can skip the job.
+
+### `release-tag.yml`
+
+Creates an annotated tag at the triggering commit (`github.sha`) and a GitHub release with
+generated notes. A version with a `-` suffix, such as `1.2.0-rc.1`, becomes a prerelease. The
+workflow fails if the tag already exists.
+
+```yaml
+name: release-tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: HJewkes/ci/.github/workflows/release-tag.yml@v1
+    with:
+      dry-run: ${{ inputs.dry-run }}
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `version` | from `package.json` | Version without the prefix. Empty reads `version` from `package.json` in `working-directory`. |
+| `tag-prefix` | `v` | Joined to the version to form the tag. |
+| `working-directory` | `.` | Directory whose `package.json` supplies the version. |
+| `dry-run` | `false` | Print the tag and release, then stop before any write. |
+
+Outputs: `tag` and `version`. Needs `contents: write` and no secrets.
+
+Setup and limits:
+
+- The tag is pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for a push made with
+  that token. A repo whose `on: push: tags` workflow publishes to npm will not see this tag.
+  Publish in a later job of the same caller instead, with `needs: release`.
+- A tag ruleset that restricts tag creation blocks the push unless it lets GitHub Actions
+  create tags. Rulesets that only forbid updating or deleting tags are fine.
+- Gate it on CI by adding `needs:` on a `node.yml` job in the same caller.
+
+### `release-changesets.yml`
+
+Runs `changesets/action` on a push to the release branch. With pending changesets, it opens or
+updates the "Version Packages" PR from `changeset-release/<branch>`. With none, which is the
+state after that PR merges, it runs the publish script. A GitHub App token pushes the PR
+branch, so the PR's own CI runs without manual approval (TP-447). npm publishing uses trusted
+publishing (OIDC) and no npm token.
+
+```yaml
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: HJewkes/ci/.github/workflows/release-changesets.yml@v1
+    with:
+      app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+      version-script: pnpm version-packages
+      publish-script: pnpm release
+    secrets:
+      app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `package-manager` | detected | `npm` or `pnpm`, as in `node.yml`. |
+| `node-version` | `'22'` | Node version. Trusted publishing needs 22.14 or later. |
+| `verify-script` | `verify` | Package script the `plan` job runs first. Empty skips it. |
+| `setup` | empty | Shell commands the `plan` job runs after install and before verify. |
+| `version-script` | `<pm> exec changeset version` | Command that versions packages for the PR. |
+| `publish-script` | `<pm> exec changeset publish` | Command that builds and publishes. It must build what it publishes, because the `release` job does not run `setup`. |
+| `pr-title` | `Version Packages` | Title of the Version Packages PR. |
+| `commit-message` | `Version Packages` | Commit message on the PR branch. |
+| `app-client-id` | empty | Client ID of the release App. Required unless `dry-run`. |
+| `working-directory` | `.` | Directory holding `.changeset/` and the root `package.json`. |
+| `dry-run` | `false` | Verify and print the plan, then stop before any write. |
+
+Secret: `app-private-key`, the release App's private key, required unless `dry-run`.
+
+In the `plan` job a dry run with pending changesets runs `version-script` on its own
+checkout and prints the changed files and versions. That checkout holds no credentials, so
+nothing leaves the runner. A real run fails at once if the App client ID or key is missing.
+
+Commits on the PR branch go through the GitHub API (`commitMode: github-api`). GitHub signs
+them and attributes them to the App rather than to `github-actions[bot]`. TP-447 found that
+titan-platform's ruleset still needs the owner's review for unattributed commits. Whether App
+attribution clears that is unverified until the first real Version Packages PR.
+
+**Owner setup, once per caller repo.** An agent cannot do these steps.
+
+1. Create a GitHub App (proposed name `hjewkes-release-bot`) with repository permissions
+   Contents: read and write, and Pull requests: read and write, and no webhook. Install it
+   only on the repos that release through this workflow.
+2. In each caller repo, add the variable `RELEASE_APP_CLIENT_ID` (the App's client ID) and
+   the secret `RELEASE_APP_PRIVATE_KEY` (a private key generated on the App's page).
+3. On npmjs.com, add a trusted publisher to every package the repo publishes: repository
+   `HJewkes/<repo>` and the **caller's** workflow filename, such as `release.yml`. npm checks
+   the top-level workflow, not `release-changesets.yml`. A repo that already has a trusted
+   publisher for `release.yml` needs no change if the caller keeps that filename. A
+   brand-new package needs its first version published by hand before npm accepts a trusted
+   publisher.
+4. Each published `package.json` needs `publishConfig.access: public` and a `repository`
+   field that matches the GitHub repo.
+
 ## Pinning
 
 Callers pin the moving major tag: `HJewkes/ci/.github/workflows/node.yml@v1`,
@@ -296,3 +427,7 @@ CI also calls `node.yml` against each fixture as a `repo-fixture-*` job. The fix
 `verify` scripts run offline `node:test` suites, and the pnpm+turbo fixture resolves a
 workspace dependency through `turbo run test`. To change a fixture's dependencies, run
 `npm install` or `pnpm install` inside it and commit the lockfile.
+
+The `repo-fixture-release-*` jobs call both release workflows with `dry-run: true` against
+`fixtures/changesets`, which holds one pending changeset. They prove the workflows parse and
+run their dry path on every PR. Their `release` jobs always show as skipped.

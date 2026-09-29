@@ -1,0 +1,12 @@
+{
+  "name": "fixture-changesets",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "node --test"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0"
+  }
+}
