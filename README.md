@@ -6,6 +6,7 @@ status check, `check`, and this repo supplies the pieces that make `check` mean 
 | Path | What it is |
 |---|---|
 | `.github/workflows/node.yml` | Reusable workflow with the standard Node jobs: `secrets`, `audit`, `verify`, `compat` |
+| `.github/workflows/secrets-full.yml` | Reusable workflow that runs gitleaks over a repo's full git history, for a scheduled caller |
 | `actions/all-green` | The composite action behind every repo's `check` job |
 | `actions/setup` | Composite action that sets up Node and npm or pnpm, restores a cache and installs |
 | `fixtures/` | npm, pnpm and pnpm+turbo repos that this repo's CI runs `node.yml` against |
@@ -191,7 +192,8 @@ ones. A private caller can pass `secrets-scan: false` and fold the audit into `v
 **gitleaks scans a commit range, not history.** On `push` and `pull_request`, gitleaks-action
 scans only the event's commit range, even with `fetch-depth: 0`. The pre-migration CI never
 scanned full history on PRs either: active-work run 36457573421 logged "1 commits scanned".
-Full-history scanning needs a scheduled run, tracked in the CI-standard plan (titan-platform TP-452).
+Full-history scanning needs a scheduled run of `secrets-full.yml`, described in
+[Full-history secret scan](#full-history-secret-scan).
 
 **Private callers and permissions.** `node.yml` pins `permissions: contents: read`, and a
 caller cannot raise it. Whether gitleaks on `pull_request` needs `pull-requests: read` in a
@@ -210,6 +212,41 @@ private repo is unverified.
 **Name temp directories distinctly.** A caller's `mktemp` naming can collide with its own test
 guards. active-work's `aw-test-*` matched the shape its `assertSafeToRemove` guard checks
 and failed two tests.
+
+## Full-history secret scan
+
+`secrets-full.yml` scans every commit on every branch and tag with gitleaks. It is not a PR
+gate: keep it out of `ci.yml` and out of `check`. Call it from its own workflow, such as
+`.github/workflows/secrets-full.yml` in the caller:
+
+```yaml
+name: secrets-full
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets-full:
+    uses: HJewkes/ci/.github/workflows/secrets-full.yml@v1
+```
+
+This runs every Monday at 06:17 UTC, and `workflow_dispatch` adds a manual "Run workflow"
+button. A called workflow sees its caller's event, and gitleaks-action picks the commit range
+from that event. On `schedule` and `workflow_dispatch` it passes no range, so gitleaks runs
+`git log -p -U0 --full-history --all` over a `fetch-depth: 0` checkout. On any other event the
+workflow fails at once rather than scan a range and look green.
+
+`contents: read` should be enough for private callers too, though only this public repo has run
+it. The checkout needs that grant. gitleaks-action reads only the public owner profile and
+uploads its SARIF report with the runner's artifact token, which needs no grant. GitHub disables `schedule` in a repo with
+no activity for 60 days, so a quiet repo's scan can stop without a failure.
+
+This repo's `secrets-full fixture` workflow calls it on `workflow_dispatch`.
 
 ## Pinning
 
