@@ -1,0 +1,12 @@
+{
+  "name": "hjewkes-ci",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify": "npm run test",
+    "test": "node --test actions/all-green/all-green.test.mjs"
+  }
+}
