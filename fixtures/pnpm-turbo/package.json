@@ -1,0 +1,11 @@
+{
+  "name": "fixture-pnpm-turbo",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "verify": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "2.11.5"
+  }
+}
