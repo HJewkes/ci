@@ -402,8 +402,12 @@ the default branch, and so can anything that runs with its token (see the list a
 
 **Tags can fail silently.** `changesets/action` creates each release tag with the API
 (`createRef`) and, if that call fails, logs only a warning. A tag ruleset that restricts tag
-creation therefore lets a release finish green with the package published and no tag. Add the
-release App to the ruleset's bypass list, or check that the tag exists after each release.
+creation therefore does not stop the publish. Right after that call the action creates the
+GitHub release for the missing tag. When the package has a `CHANGELOG.md`, that call most
+likely fails after `npm publish`, so the job goes red with the package already published. We
+have not run this case. When the package has no changelog, the action skips the release and
+the job finishes green with no tag. Add the release App to the ruleset's bypass list, or check
+that the tag exists after each release.
 
 Commits on the PR branch go through the GitHub API (`commitMode: github-api`). GitHub signs
 them and attributes them to the App rather than to `github-actions[bot]`. TP-447 found that
