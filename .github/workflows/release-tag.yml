@@ -1,0 +1,113 @@
+name: release-tag
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to release, without the tag prefix. Empty reads it from package.json in working-directory.
+        type: string
+        default: ''
+      tag-prefix:
+        description: Prefix joined to the version to form the tag name.
+        type: string
+        default: v
+      working-directory:
+        description: Repo-relative directory whose package.json supplies the version.
+        type: string
+        default: '.'
+      dry-run:
+        description: Compute and print the tag and release, then stop before any write.
+        type: boolean
+        default: false
+    outputs:
+      tag:
+        description: The tag name, such as v1.2.3.
+        value: ${{ jobs.plan.outputs.tag }}
+      version:
+        description: The released version, such as 1.2.3.
+        value: ${{ jobs.plan.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: resolve
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          VERSION: ${{ inputs.version }}
+          PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          version="${VERSION:-$(node -p 'require("./package.json").version ?? ""')}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=release-tag::\"$version\" is not a semver version"; exit 1
+          fi
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+          {
+            echo "version=$version"
+            echo "tag=$PREFIX$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+      - name: Refuse an existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > /dev/null 2> "$RUNNER_TEMP/tag-lookup.err"; then
+            echo "::error title=release-tag::tag $TAG already exists in $GITHUB_REPOSITORY"; exit 1
+          fi
+          if ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag-lookup.err"; then
+            cat "$RUNNER_TEMP/tag-lookup.err"; exit 1
+          fi
+      - name: Print the plan
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          PRERELEASE: ${{ steps.resolve.outputs.prerelease }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          mode=release; if [ "$DRY_RUN" = true ]; then mode="dry run"; fi
+          {
+            echo "release-tag $mode: annotated tag $TAG at $GITHUB_SHA in $GITHUB_REPOSITORY"
+            echo "release-tag $mode: GitHub release $TAG, prerelease $PRERELEASE, generated notes"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = true ]; then
+            echo "release-tag dry run: stopping before any write" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    needs: plan
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - name: Push the annotated tag
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        run: |
+          args=(release create "$TAG" --verify-tag --title "$TAG" --generate-notes)
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
+          gh "${args[@]}"

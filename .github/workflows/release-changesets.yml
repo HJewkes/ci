@@ -1,0 +1,214 @@
+name: release-changesets
+
+on:
+  workflow_call:
+    inputs:
+      package-manager:
+        description: npm or pnpm. Empty detects it from the lockfile.
+        type: string
+        default: ''
+      node-version:
+        description: Node version for verify and release. Trusted publishing needs 22.14 or later.
+        type: string
+        default: '22'
+      verify-script:
+        description: Package script run before release. Empty skips it.
+        type: string
+        default: verify
+      setup:
+        description: Shell commands run in working-directory after install and before the verify script.
+        type: string
+        default: ''
+      version-script:
+        description: Command that versions packages for the Version Packages PR. Empty runs `<pm> exec changeset version`.
+        type: string
+        default: ''
+      publish-script:
+        description: Command that builds and publishes. Empty runs `<pm> exec changeset publish`.
+        type: string
+        default: ''
+      pr-title:
+        description: Title of the Version Packages PR.
+        type: string
+        default: Version Packages
+      commit-message:
+        description: Commit message on the Version Packages PR branch.
+        type: string
+        default: Version Packages
+      app-client-id:
+        description: Client ID of the GitHub App that pushes the PR branch. Required unless dry-run.
+        type: string
+        default: ''
+      working-directory:
+        description: Repo-relative directory that holds the changesets root package.json.
+        type: string
+        default: '.'
+      dry-run:
+        description: Verify, compute and print the release, then stop before any write.
+        type: boolean
+        default: false
+    secrets:
+      app-private-key:
+        description: Private key of the GitHub App named by app-client-id. Required unless dry-run.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version-script: ${{ steps.scripts.outputs.version }}
+      publish-script: ${{ steps.scripts.outputs.publish }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .git/hjewkes-ci
+          sparse-checkout: actions/setup
+          persist-credentials: false
+      - id: setup
+        uses: ./.git/hjewkes-ci/actions/setup
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+      - if: inputs.setup != ''
+        env:
+          SETUP: ${{ inputs.setup }}
+        run: bash -euo pipefail -c "$SETUP"
+      - if: inputs.verify-script != ''
+        env:
+          PM: ${{ steps.setup.outputs.package-manager }}
+          SCRIPT: ${{ inputs.verify-script }}
+        run: '"$PM" run "$SCRIPT"'
+      # changesets/action picks its mode the same way: any .changeset/*.md other than README.md.
+      - id: scripts
+        env:
+          PM: ${{ steps.setup.outputs.package-manager }}
+          VERSION_SCRIPT: ${{ inputs.version-script }}
+          PUBLISH_SCRIPT: ${{ inputs.publish-script }}
+        run: |
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name README.md | wc -l | tr -d ' ')
+          mode=publish; if [ "$pending" -gt 0 ]; then mode=version-pr; fi
+          {
+            echo "pending=$pending"
+            echo "mode=$mode"
+            echo "version=${VERSION_SCRIPT:-$PM exec changeset version}"
+            echo "publish=${PUBLISH_SCRIPT:-$PM exec changeset publish}"
+          } >> "$GITHUB_OUTPUT"
+      # The checkout stores no credentials and GITHUB_TOKEN is read-only, so the versioned tree cannot be pushed.
+      - name: Preview the Version Packages diff
+        if: steps.scripts.outputs.mode == 'version-pr'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION_SCRIPT: ${{ steps.scripts.outputs.version }}
+        run: |
+          bash -euo pipefail -c "$VERSION_SCRIPT"
+          git status --short
+          git diff -U0 -- '*package.json' | grep -E '^[-+][[:space:]]*"version"' || true
+      - name: Print the plan
+        env:
+          MODE: ${{ steps.scripts.outputs.mode }}
+          PENDING: ${{ steps.scripts.outputs.pending }}
+          VERSION_SCRIPT: ${{ steps.scripts.outputs.version }}
+          PUBLISH_SCRIPT: ${{ steps.scripts.outputs.publish }}
+          PR_TITLE: ${{ inputs.pr-title }}
+          BRANCH: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          HAS_APP_ID: ${{ inputs.app-client-id != '' }}
+          HAS_APP_KEY: ${{ secrets.app-private-key != '' }}
+        run: |
+          label=release; if [ "$DRY_RUN" = true ]; then label="dry run"; fi
+          {
+            echo "release-changesets $label: mode $MODE, $PENDING pending changesets"
+            if [ "$MODE" = version-pr ]; then
+              echo "release-changesets $label: run $VERSION_SCRIPT, then open or update PR \"$PR_TITLE\" from changeset-release/$BRANCH into $BRANCH"
+            else
+              echo "release-changesets $label: run $PUBLISH_SCRIPT with npm trusted publishing"
+            fi
+            echo "release-changesets $label: App client id set $HAS_APP_ID, App private key set $HAS_APP_KEY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = true ]; then
+            echo "release-changesets dry run: stopping before any write" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    needs: plan
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    # Every GitHub write uses the App token, so GITHUB_TOKEN stays read-only.
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: release-changesets-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Require the GitHub App
+        env:
+          APP_CLIENT_ID: ${{ inputs.app-client-id }}
+          HAS_APP_KEY: ${{ secrets.app-private-key != '' }}
+        working-directory: .
+        run: |
+          if [ -z "$APP_CLIENT_ID" ] || [ "$HAS_APP_KEY" != true ]; then
+            echo "::error title=release-changesets::set app-client-id and the app-private-key secret; GITHUB_TOKEN pushes never trigger the PR's CI"
+            exit 1
+          fi
+      # In github-api mode changesets/action pushes through the API and writes its own ~/.netrc.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Setup comes from this workflow's own commit; under .git, the caller's tools never see it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .git/hjewkes-ci
+          sparse-checkout: actions/setup
+          persist-credentials: false
+      - uses: ./.git/hjewkes-ci/actions/setup
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          working-directory: ${{ inputs.working-directory }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; npm 12 rejects the --git-checks flag changesets passes.
+      - run: npm install -g npm@11.20.0 && npm --version
+      # Only the PR branch, its commits and the GitHub releases use the App token; npm publishing stays on OIDC.
+      - id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+      # github-api commits are signed and attributed to the App, not github-actions[bot].
+      - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        env:
+          # The action reads env GITHUB_TOKEN before its github-token input; both name the App token.
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          commitMode: github-api
+          cwd: ${{ inputs.working-directory }}
+          version: ${{ needs.plan.outputs.version-script }}
+          publish: ${{ needs.plan.outputs.publish-script }}
+          title: ${{ inputs.pr-title }}
+          commit: ${{ inputs.commit-message }}

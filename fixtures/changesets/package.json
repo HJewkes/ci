@@ -1,0 +1,13 @@
+{
+  "name": "fixture-changesets",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "verify": "node --test"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0"
+  }
+}

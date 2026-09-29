@@ -59,9 +59,27 @@ jobs:
   repo-fixture-all-green:
     uses: ./.github/workflows/fixture-all-green.yml
 
+  # A caller must grant what the release job requests even when dry-run skips it.
+  repo-fixture-release-tag:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      working-directory: fixtures/changesets
+      dry-run: true
+
+  repo-fixture-release-changesets:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release-changesets.yml
+    with:
+      working-directory: fixtures/changesets
+      dry-run: true
+
   check:
     if: always()
-    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-all-green]
+    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-all-green, repo-fixture-release-tag, repo-fixture-release-changesets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
