@@ -56,9 +56,12 @@ jobs:
       compat-versions: '[22, 24]'
       secrets-scan: false
 
+  repo-fixture-all-green:
+    uses: ./.github/workflows/fixture-all-green.yml
+
   check:
     if: always()
-    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo]
+    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-all-green]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

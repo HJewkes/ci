@@ -1,0 +1,27 @@
+name: fixture-all-green
+
+# A reusable workflow whose own check job self-checks this file with no workflow-file input.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "work passed"
+
+  check:
+    if: always()
+    needs: [work]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: actions
+          persist-credentials: false
+      - uses: ./actions/all-green
+        with:
+          needs: ${{ toJSON(needs) }}

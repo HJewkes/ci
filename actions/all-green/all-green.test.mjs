@@ -127,6 +127,7 @@ describe('job id parsing', () => {
         'repo-fixture-npm': ok,
         'repo-fixture-pnpm': ok,
         'repo-fixture-pnpm-turbo': ok,
+        'repo-fixture-all-green': ok,
       },
       workflowText: text,
     });
