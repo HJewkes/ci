@@ -7,6 +7,6 @@
   },
   "scripts": {
     "verify": "npm run test",
-    "test": "node --test actions/all-green/all-green.test.mjs"
+    "test": "node --test actions/all-green/all-green.test.mjs actions/vitest-pool/vitest-pool.test.mjs"
   }
 }

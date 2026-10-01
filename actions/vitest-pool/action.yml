@@ -1,0 +1,17 @@
+name: vitest-pool
+description: >-
+  Fails when a vitest config or inline project leaves pool unset (vitest defaults to forks), sets
+  forks without a `// vitest-pool: forks <reason>` comment, or sets threads without a worker cap.
+inputs:
+  working-directory:
+    description: Directory searched for vitest configs. node_modules and .worktrees are skipped.
+    required: false
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - name: Check vitest pools
+      shell: bash
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: node "$GITHUB_ACTION_PATH/vitest-pool.mjs" "$WORKING_DIRECTORY"
