@@ -457,9 +457,11 @@ It reads every `vitest.config.*`, `vitest.workspace.*` and `vitest.projects.*` u
 directory (skipping `node_modules`, `.worktrees` and `.git`), then judges the root and each
 inline project in `test.projects` or a workspace array:
 
-- `pool: 'threads'` or `'vmThreads'` passes, if a `maxThreads` or `maxWorkers` is set. The cap can
-  sit in the same config, in the root `poolOptions` or `test.maxWorkers`, or in a sibling config
-  in the same directory (a workspace file takes its cap from its `vitest.config.*`).
+- `pool: 'threads'` or `'vmThreads'` passes, if a `maxThreads` or `maxWorkers` is set at the root
+  of the config: root `poolOptions` or root `test.maxWorkers`. A workspace file takes its cap from
+  a sibling `vitest.config.*` in the same directory. A cap written inside a project does not
+  count: vitest 3 reads pool options only from the root, and this check does not assume that
+  a project-level `maxWorkers` is honoured either.
 - Any other pool, such as `forks`, passes only with a comment `// vitest-pool: forks <reason>` on
   the pool line or in the unbroken comment block directly above it. The reason is required.
 - Pool unset fails. The root may leave it unset only when every inline project sets it, or when a
@@ -472,8 +474,10 @@ The check is static text analysis; it never runs a config. Limits:
 - Projects given as strings or globs are not followed. The configs they point to are found only
   when they are named `vitest.config.*`, `vitest.workspace.*` or `vitest.projects.*`.
 - `vite.config.*` with a `test` block is not read.
-- A cap anywhere counts for every threads project in the file; the check does not tell which
-  project a pool option applies to (vitest 3 reads `poolOptions` only from the root anyway).
+- A root cap counts for every threads project in the file.
+- A `pool` later overridden by `mergeConfig`, a `pool` key in a decoy object that is not a
+  project, and a `vitest-pool: forks` comment inside a string or template literal are not
+  told apart from the real thing.
 
 ## Pinning
 

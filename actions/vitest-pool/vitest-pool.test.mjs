@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, test } from 'node:test';
 import { findConfigs, hasAllowComment, mask, run } from './vitest-pool.mjs';
 
@@ -117,6 +119,15 @@ describe('failing shapes', () => {
     assert.match(messages(root)[0], /no maxThreads or maxWorkers cap/);
   });
 
+  test('a threads project capped only inside itself, with no root cap', () => {
+    const root = repo({
+      'vitest.config.ts': `export default { test: { projects: [
+  { test: { name: 'a', pool: 'threads', maxWorkers: 4, poolOptions: { threads: { maxThreads: 4 } } } },
+] } }`,
+    });
+    assert.match(messages(root)[0], /no maxThreads or maxWorkers cap/);
+  });
+
   test('a project without pool when the root sets none', () => {
     const root = repo({
       'vitest.config.ts': `export default { test: { maxWorkers: 4, projects: [
@@ -141,6 +152,27 @@ describe('failing shapes', () => {
   });
 });
 
+describe('command line', () => {
+  const script = fileURLToPath(new URL('./vitest-pool.mjs', import.meta.url));
+  const exec = (entry, dir) => spawnSync(process.execPath, [entry, dir], { encoding: 'utf8' });
+
+  test('exits 1 and reports a failing repo', () => {
+    const dir = repo({ 'vitest.config.ts': `export default { test: {} }` });
+    const result = exec(script, dir);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /pool is unset/);
+  });
+
+  test('still runs when started through a symlink', () => {
+    const dir = repo({ 'vitest.config.ts': `export default { test: {} }` });
+    const link = join(dir, 'link.mjs');
+    symlinkSync(script, link);
+    const result = exec(link, dir);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /pool is unset/);
+  });
+});
+
 describe('helpers', () => {
   test('mask blanks comments and strings but keeps offsets', () => {
     const text = `a // pool: 'x'\n"pool:" /* pool: */ b`;
@@ -153,6 +185,7 @@ describe('helpers', () => {
     const lines = ['// vitest-pool: forks why', 'name: "x",', 'pool: "forks",'];
     assert.equal(hasAllowComment(lines, 3), false);
     assert.equal(hasAllowComment(['// vitest-pool: forks why', '// more', 'pool: "forks",'], 3), true);
+    assert.equal(hasAllowComment(['// vitest-pool: forks why', 'a: 1 /* x */', 'pool: "forks",'], 3), false);
   });
 
   test('discovery skips node_modules and .worktrees', () => {

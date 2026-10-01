@@ -1,7 +1,7 @@
 // Runs on the runner's preinstalled Node, so it uses only APIs available in Node 20.
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const SKIPPED_DIRS = new Set(['node_modules', '.worktrees', '.git']);
 const CONFIG_NAME = /^vitest\.(config|workspace|projects)\.[cm]?[jt]s$/;
@@ -105,7 +105,7 @@ export function hasAllowComment(lines, lineNumber) {
   if (ALLOW_COMMENT.test(lines[lineNumber - 1])) return true;
   for (let n = lineNumber - 1; n >= 1; n--) {
     const line = lines[n - 1].trim();
-    if (!/^(\/\/|\/\*|\*)/.test(line) && !line.endsWith('*/')) return false;
+    if (!/^(\/\/|\/\*|\*)/.test(line)) return false;
     if (ALLOW_COMMENT.test(line)) return true;
   }
   return false;
@@ -151,7 +151,7 @@ function judge(unit, analysis, sibling) {
   }
   if (!pool.value) return fail('pool is not a string literal the check can read');
   if (THREAD_POOLS.has(pool.value)) {
-    const capped = analysis.rootCap || sibling.cap || capIn(unit.masked, unit.range);
+    const capped = analysis.rootCap || sibling.cap;
     return capped ? undefined : fail(`pool "${pool.value}" has no maxThreads or maxWorkers cap`);
   }
   if (hasAllowComment(analysis.lines, where)) return undefined;
@@ -193,4 +193,13 @@ function main(root) {
   if (problems.length > 0) process.exit(1);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main(process.argv[2] ?? '.');
+// Compares real paths so a symlinked entry (macOS $TMPDIR, a linked checkout) still runs main.
+function isEntryPoint() {
+  try {
+    return realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) main(process.argv[2] ?? '.');
