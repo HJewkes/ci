@@ -10,6 +10,7 @@ status check, `check`, and this repo supplies the pieces that make `check` mean 
 | `.github/workflows/release-tag.yml` | Reusable workflow that creates an annotated version tag and a GitHub release |
 | `.github/workflows/release-changesets.yml` | Reusable workflow for the changesets flow: a Version Packages PR, then an npm publish |
 | `actions/all-green` | The composite action behind every repo's `check` job |
+| `actions/vitest-pool` | Composite action that fails a vitest config left on the default forks pool |
 | `actions/setup` | Composite action that sets up Node and npm or pnpm, restores a cache and installs |
 | `fixtures/` | npm, pnpm, pnpm+turbo and changesets repos that this repo's CI runs the workflows against |
 
@@ -56,6 +57,7 @@ report as `std / verify`, `std / secrets` and so on. Rulesets require only `chec
 | Job | Runs | When |
 |---|---|---|
 | `secrets` | gitleaks over the repo | unless `secrets-scan: false` |
+| `vitest-pool` | the [vitest pool check](#vitest-pool-check) over `working-directory` | when `vitest-pool-check: true` |
 | `audit` | `<pm> audit --audit-level=<audit-level>` | always |
 | `verify` | install, then `setup`, then `<pm> run <verify-script>` on `node-version` | always |
 | `compat` | the same as `verify`, once per Node version | when `compat-versions` is set |
@@ -71,6 +73,7 @@ report as `std / verify`, `std / secrets` and so on. Rulesets require only `chec
 | `audit-level` | `critical` | Lowest advisory severity that fails `audit`. |
 | `audit-omit-dev` | `false` | Audit production dependencies only (`--omit=dev` or `--prod`). |
 | `secrets-scan` | `true` | Run gitleaks. |
+| `vitest-pool-check` | `false` | Run the vitest pool check. |
 | `setup` | empty | Shell commands run after install and before the verify script, such as `npx playwright install --with-deps`. |
 | `working-directory` | `.` | Repo-relative directory of the package to verify. |
 
@@ -430,10 +433,57 @@ attribution clears that is unverified until the first real Version Packages PR.
 4. Each published `package.json` needs `publishConfig.access: public` and a `repository`
    field that matches the GitHub repo.
 
+## Vitest pool check
+
+vitest's default `forks` pool leaves orphaned workers (PPID 1) when the parent dies, and uncapped
+pools stack up on a busy machine. `actions/vitest-pool` fails a repo that leaves this to chance.
+Opt in from the standard workflow with `vitest-pool-check: true`, or call the action directly:
+
+```yaml
+jobs:
+  std:
+    uses: HJewkes/ci/.github/workflows/node.yml@v1
+    with:
+      vitest-pool-check: true
+```
+
+```yaml
+      - uses: HJewkes/ci/actions/vitest-pool@v1
+        with:
+          working-directory: .   # optional
+```
+
+It reads every `vitest.config.*`, `vitest.workspace.*` and `vitest.projects.*` under the
+directory (skipping `node_modules`, `.worktrees` and `.git`), then judges the root and each
+inline project in `test.projects` or a workspace array:
+
+- `pool: 'threads'` or `'vmThreads'` passes, if a `maxThreads` or `maxWorkers` is set at the root
+  of the config: root `poolOptions` or root `test.maxWorkers`. A workspace file takes its cap from
+  a sibling `vitest.config.*` in the same directory. A cap written inside a project does not
+  count: vitest 3 reads pool options only from the root, and this check does not assume that
+  a project-level `maxWorkers` is honoured either.
+- Any other pool, such as `forks`, passes only with a comment `// vitest-pool: forks <reason>` on
+  the pool line or in the unbroken comment block directly above it. The reason is required.
+- Pool unset fails. The root may leave it unset only when every inline project sets it, or when a
+  sibling workspace file does. A project that sets none passes only with `extends: true` under a
+  root that sets one.
+
+The check is static text analysis; it never runs a config. Limits:
+
+- A `pool` that is not a string literal (a variable, a spread) fails, since the check cannot read it.
+- Projects given as strings or globs are not followed. The configs they point to are found only
+  when they are named `vitest.config.*`, `vitest.workspace.*` or `vitest.projects.*`.
+- `vite.config.*` with a `test` block is not read.
+- A root cap counts for every threads project in the file.
+- A `pool` later overridden by `mergeConfig`, a `pool` key in a decoy object that is not a
+  project, and a `vitest-pool: forks` comment inside a string or template literal are not
+  told apart from the real thing.
+
 ## Pinning
 
 Callers pin the moving major tag: `HJewkes/ci/.github/workflows/node.yml@v1`,
-`HJewkes/ci/actions/all-green@v1`, `HJewkes/ci/actions/setup@v1`.
+`HJewkes/ci/actions/all-green@v1`, `HJewkes/ci/actions/setup@v1`,
+`HJewkes/ci/actions/vitest-pool@v1`.
 
 - `v1` moves only to a commit on `main` whose own CI is green, and only the owner moves it.
 - `vX.Y.Z` tags are immutable. A tag ruleset forbids updating or deleting them.
@@ -456,7 +506,7 @@ it on 20, 22 and 24.
 npm run verify
 ```
 
-`verify` runs the `node:test` suite. The tests need no dependencies, so there is no lockfile or
+`verify` runs the `node:test` suites for `all-green` and `vitest-pool`. The tests need no dependencies, so there is no lockfile or
 install step, and the same command runs locally and in CI.
 
 CI also calls `node.yml` against each fixture as a `repo-fixture-*` job. The fixtures'

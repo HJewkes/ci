@@ -56,6 +56,27 @@ jobs:
       compat-versions: '[22, 24]'
       secrets-scan: false
 
+  repo-fixture-vitest-pool:
+    uses: ./.github/workflows/node.yml
+    with:
+      working-directory: fixtures/vitest-pool-pass
+      secrets-scan: false
+      vitest-pool-check: true
+
+  # The failing fixture must make the action fail; an action that passes everything would go unseen.
+  vitest-pool-negative:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: action
+        uses: ./actions/vitest-pool
+        continue-on-error: true
+        with:
+          working-directory: fixtures/vitest-pool-fail
+      - env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: test "$OUTCOME" = failure
+
   repo-fixture-all-green:
     uses: ./.github/workflows/fixture-all-green.yml
 
@@ -79,7 +100,7 @@ jobs:
 
   check:
     if: always()
-    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-all-green, repo-fixture-release-tag, repo-fixture-release-changesets]
+    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-vitest-pool, vitest-pool-negative, repo-fixture-all-green, repo-fixture-release-tag, repo-fixture-release-changesets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
