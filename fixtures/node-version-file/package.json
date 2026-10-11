@@ -1,0 +1,8 @@
+{
+  "name": "fixture-node-version-file",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "node --test"
+  }
+}

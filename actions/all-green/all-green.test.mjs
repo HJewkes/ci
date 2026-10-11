@@ -129,6 +129,7 @@ describe('job id parsing', () => {
         'repo-fixture-npm': ok,
         'repo-fixture-pnpm': ok,
         'repo-fixture-pnpm-turbo': ok,
+        'repo-fixture-node-version-file': ok,
         'repo-fixture-vitest-pool': ok,
         'vitest-pool-negative': ok,
         'repo-fixture-all-green': ok,

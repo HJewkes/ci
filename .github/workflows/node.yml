@@ -11,6 +11,10 @@ on:
         description: Node version for audit and verify.
         type: string
         default: '22'
+      node-version-file:
+        description: Repo-relative file naming the Node version for audit and verify, such as .node-version. Overrides node-version.
+        type: string
+        default: ''
       compat-versions:
         description: JSON list of Node versions for the compat job, for example '[22, 24]'. Empty skips compat.
         type: string
@@ -101,6 +105,7 @@ jobs:
         uses: ./.git/hjewkes-ci/actions/setup
         with:
           node-version: ${{ inputs.node-version }}
+          node-version-file: ${{ inputs.node-version-file }}
           package-manager: ${{ inputs.package-manager }}
           working-directory: ${{ inputs.working-directory }}
           install: false
@@ -136,6 +141,7 @@ jobs:
         uses: ./.git/hjewkes-ci/actions/setup
         with:
           node-version: ${{ inputs.node-version }}
+          node-version-file: ${{ inputs.node-version-file }}
           package-manager: ${{ inputs.package-manager }}
           working-directory: ${{ inputs.working-directory }}
       - if: inputs.setup != ''
