@@ -56,6 +56,16 @@ jobs:
       compat-versions: '[22, 24]'
       secrets-scan: false
 
+  # The file names 24 and node-version defaults to 22, so the setup line fails if the file is ignored.
+  repo-fixture-node-version-file:
+    uses: ./.github/workflows/node.yml
+    with:
+      working-directory: fixtures/node-version-file
+      node-version-file: fixtures/node-version-file/.node-version
+      secrets-scan: false
+      setup: >-
+        node -e "process.exit(process.versions.node.startsWith('24.') ? 0 : 1)"
+
   repo-fixture-vitest-pool:
     uses: ./.github/workflows/node.yml
     with:
@@ -100,7 +110,7 @@ jobs:
 
   check:
     if: always()
-    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-vitest-pool, vitest-pool-negative, repo-fixture-all-green, repo-fixture-release-tag, repo-fixture-release-changesets]
+    needs: [verify, compat, repo-fixture-npm, repo-fixture-pnpm, repo-fixture-pnpm-turbo, repo-fixture-node-version-file, repo-fixture-vitest-pool, vitest-pool-negative, repo-fixture-all-green, repo-fixture-release-tag, repo-fixture-release-changesets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

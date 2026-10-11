@@ -7,6 +7,12 @@ inputs:
     description: Node version for actions/setup-node.
     required: false
     default: '22'
+  node-version-file:
+    description: >-
+      Repo-relative file naming the Node version, such as .node-version. When set, node-version
+      is ignored, because setup-node would otherwise let it win.
+    required: false
+    default: ''
   package-manager:
     description: npm or pnpm. Empty detects it from the lockfile in working-directory.
     required: false
@@ -56,7 +62,8 @@ runs:
     - name: Install Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: ${{ inputs.node-version }}
+        node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
+        node-version-file: ${{ inputs.node-version-file }}
     - name: Locate the package-manager cache
       id: cache-dir
       if: inputs.install == 'true'

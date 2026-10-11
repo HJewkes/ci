@@ -68,6 +68,7 @@ report as `std / verify`, `std / secrets` and so on. Rulesets require only `chec
 |---|---|---|
 | `package-manager` | detected | `npm` or `pnpm`. Empty detects it from `pnpm-lock.yaml` or `package-lock.json`. |
 | `node-version` | `'22'` | Node version for `audit` and `verify`. |
+| `node-version-file` | empty | Repo-relative path (not relative to `working-directory`) of a file naming the Node version, such as `.node-version`. When set it overrides `node-version`. `compat` still uses `compat-versions`. |
 | `compat-versions` | empty | JSON list such as `'[22, 24]'`. Empty or `'[]'` skips `compat`. |
 | `verify-script` | `verify` | Package script that `verify` and `compat` run. |
 | `audit-level` | `critical` | Lowest advisory severity that fails `audit`. |
@@ -96,7 +97,8 @@ Repo-specific jobs (`repo-<name>`) use it after `actions/checkout`:
           node-version: '22'
 ```
 
-Inputs: `node-version` (default `'22'`), `package-manager` (detected), `working-directory`
+Inputs: `node-version` (default `'22'`), `node-version-file` (empty; when set, `node-version` is
+ignored), `package-manager` (detected), `working-directory`
 (`.`) and `install` (`true`). Output: `package-manager`. The cache key includes the exact
 Node version as well as the lockfile hash. `setup-node`'s own cache key omits the Node version,
 which once let native modules built for one ABI load under another.
